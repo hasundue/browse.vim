@@ -1,0 +1,10 @@
+.{
+    .name = "browse.vim",
+    .version = "0.1.0",
+    .dependencies = .{
+        .mecha = .{
+            .url = "https://github.com/Hejsil/mecha/archive/cb4698d.tar.gz",
+            .hash = "122028f7fdb0565e8c21ad6c8aa9080f7f6f5ce4fb7a8ff4cf78364ffd0ac11a58ee",
+        },
+    },
+}
