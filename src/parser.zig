@@ -5,7 +5,7 @@ const testing = std.testing;
 const debug = std.debug;
 
 //
-// Grammer for HTML
+// Structure of HTML
 //
 const doc = m.combine(.{ doctype, html });
 
@@ -18,27 +18,50 @@ const head = m.combine(.{ start("head"), m.opt(string), end("head") });
 const body = m.combine(.{
     start("body"),
     m.opt(header),
-    m.many(element),
+    many(m.oneOf(.{
+        h,
+        element,
+    })),
     end("body"),
 });
 
-const header = m.combine(.{ start("header"), m.many(element), end("header") });
+const header = m.combine(.{ start("header"), many(element), end("header") });
 
 const element = m.oneOf(.{
     string,
+    h,
 });
 
 //
 // Parsers for elements
 //
+const Parser = m.Parser([]const u8);
 
-const string = m.asStr(m.many(char, .{ .min = 1 }));
+const string = m.many(char, .{ .collect = false, .min = 1 });
 
 const char = m.oneOf(.{
-    m.utf8.range(0x0027, 0x003B),
+    m.utf8.range(0x0000, 0x003B),
+    escape('>'),
     m.utf8.char(0x003D),
+    escape('<'),
     m.utf8.range(0x003F, 0x27BF),
 });
+
+const h = m.oneOf(.{ h1, h2, h3, h4, h5, h6 });
+
+const h1 = m.combine(.{ start("h1"), many(_element), end("h1") });
+const h2 = m.combine(.{ start("h2"), many(_element), end("h2") });
+const h3 = m.combine(.{ start("h3"), many(_element), end("h3") });
+const h4 = m.combine(.{ start("h4"), many(_element), end("h4") });
+const h5 = m.combine(.{ start("h5"), many(_element), end("h5") });
+const h6 = m.combine(.{ start("h6"), many(_element), end("h6") });
+
+//
+// Utilities
+//
+fn many(comptime parser: anytype) Parser {
+    return m.many(parser, .{ .collect = false });
+}
 
 fn start(comptime tag: []const u8) m.Parser(void) {
     return m.discard(m.string("<" ++ tag ++ ">"));
@@ -46,6 +69,19 @@ fn start(comptime tag: []const u8) m.Parser(void) {
 
 fn end(comptime tag: []const u8) m.Parser(void) {
     return m.discard(m.string("</" ++ tag ++ ">"));
+}
+
+const _element = m.ref(elementRef);
+
+fn elementRef() Parser {
+    return element;
+}
+
+fn escape(comptime c: u21) m.Parser(u21) {
+    return m.combine(.{
+        m.discard(m.utf8.char('\\')),
+        m.utf8.char(c),
+    });
 }
 
 //
@@ -60,12 +96,29 @@ test "string" {
 }
 
 test "doctype" {
-    try expectParseAll(void, doctype, "<!DOCTYPE html>");
+    try expectParseAll(void, doctype,
+        \\<!DOCTYPE html>
+    );
 }
 
 test "head" {
     try expectParseAll(?[]const u8, head,
-        \\<head>hello</head>
+        \\<head></head>
+    );
+    try expectParseAll(?[]const u8, head,
+        \\<head>browse.vim</head>
+    );
+}
+
+test "header" {
+    try expectParseAll([]const u8, header,
+        \\<header>browse.vim</header>
+    );
+}
+
+test "h1" {
+    try expectParseAll([]const u8, h1,
+        \\<h1>browse.vim</h1>
     );
 }
 
