@@ -88,36 +88,39 @@ fn escape(comptime c: u21) m.Parser(u21) {
 // Tests
 //
 test "char" {
-    try expectParseAll(u21, char, "a");
+    try expectMatch(u21, char, "a");
+    try expectMatch(u21, char, "\n");
+    try expectMatch(u21, char, "\\>");
+    try expectMatch(u21, char, "\\<");
 }
 
 test "string" {
-    try expectParseAll([]const u8, string, "hello");
+    try expectMatch([]const u8, string, "hello");
 }
 
 test "doctype" {
-    try expectParseAll(void, doctype,
+    try expectMatch(void, doctype,
         \\<!DOCTYPE html>
     );
 }
 
 test "head" {
-    try expectParseAll(?[]const u8, head,
+    try expectMatch(?[]const u8, head,
         \\<head></head>
     );
-    try expectParseAll(?[]const u8, head,
+    try expectMatch(?[]const u8, head,
         \\<head>browse.vim</head>
     );
 }
 
 test "header" {
-    try expectParseAll([]const u8, header,
+    try expectMatch([]const u8, header,
         \\<header>browse.vim</header>
     );
 }
 
 test "h1" {
-    try expectParseAll([]const u8, h1,
+    try expectMatch([]const u8, h1,
         \\<h1>browse.vim</h1>
     );
 }
@@ -125,7 +128,7 @@ test "h1" {
 //
 // Test helpers
 //
-fn expectParseAll(comptime T: type, parser: m.Parser(T), s: []const u8) !void {
+fn expectMatch(comptime T: type, parser: m.Parser(T), s: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
