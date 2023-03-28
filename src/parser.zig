@@ -25,12 +25,12 @@ const body = combine(.{
     end("body"),
 });
 
-const header = combine(.{ start("header"), many(element), end("header") });
-
 const element = m.oneOf(.{
     string,
     h,
 });
+
+const header = combine(.{ start("header"), many(element), end("header") });
 
 //
 // Parsers for elements
@@ -61,8 +61,16 @@ const Parser = m.Parser([]const u8);
 const ParserResult = m.Result([]const u8);
 const ParserReturn = m.Error!ParserResult;
 
-fn many(comptime parser: anytype) Parser {
-    return m.many(parser, .{ .collect = false });
+fn many(comptime parser: Parser) Parser {
+    return struct {
+        fn func(allocator: std.mem.Allocator, s: []const u8) ParserReturn {
+            const r = try m.many(parser, .{})(allocator, s);
+            return ParserResult{
+                .value = try std.mem.concat(allocator, u8, r.value),
+                .rest = r.rest,
+            };
+        }
+    }.func;
 }
 
 fn combine(comptime parsers: anytype) Parser {
@@ -91,29 +99,6 @@ fn opt(comptime parser: Parser) Parser {
     return m.map(nullToStr, m.opt(parser));
 }
 
-test "combine" {
-    try expectMatch([]const u8, combine(.{ start("a"), string, end("a") }),
-        \\<a>Vim</a>
-    );
-    try expectMatch([]const u8, combine(.{ m.discard(start("a")), string, end("a") }),
-        \\<a>Vim</a>
-    );
-    try expectMatch([]const u8, combine(.{
-        m.discard(start("a")),
-        string,
-        m.discard(end("a")),
-    }),
-        \\<a>Vim</a>
-    );
-    try expectMatch([]const u8, combine(.{
-        m.discard(start("a")),
-        m.discard(string),
-        m.discard(end("a")),
-    }),
-        \\<a>Vim</a>
-    );
-}
-
 fn start(comptime tag: []const u8) m.Parser(void) {
     return m.discard(m.string("<" ++ tag ++ ">"));
 }
@@ -139,50 +124,91 @@ fn escape(comptime c: u21) m.Parser(u21) {
 // Tests
 //
 test "char" {
-    try expectMatch(u21, char, "a");
-    try expectMatch(u21, char, "\n");
-    try expectMatch(u21, char, "\\>");
-    try expectMatch(u21, char, "\\<");
+    try expectMatch(char, 'a', "a");
+    try expectMatch(char, '\n', "\n");
+
+    try expectMatch(char, '>', "\\>");
+    try expectError(char, m.Error.ParserFailed, ">");
+
+    try expectMatch(char, '<', "\\<");
+    try expectError(char, m.Error.ParserFailed, "<");
 }
 
 test "string" {
-    try expectMatch([]const u8, string, "hello");
+    try expectMatch(string, "hello", "hello");
+    try expectMatch(string, "a", "a");
+    try expectMatch(string, "Vim", "Vim");
+
+    try expectError(string, m.Error.ParserFailed, "<h1>");
+}
+
+test "combine" {
+    try expectMatch(combine(.{ start("a"), string, end("a") }), "Vim",
+        \\<a>Vim</a>
+    );
+    try expectMatch(combine(.{ start("a"), m.discard(string), end("a") }), "",
+        \\<a>Vim</a>
+    );
+}
+
+test "many" {
+    try expectMatch(many(h), "h1", "<h1>h1</h1>");
+    try expectMatch(many(h), "h1h2", "<h1>h1</h1><h2>h2</h2>");
 }
 
 test "doctype" {
-    try expectMatch(void, doctype,
+    try expectMatch(doctype, @typeInfo(void).Void,
         \\<!DOCTYPE html>
     );
 }
 
 test "head" {
-    try expectMatch([]const u8, head,
+    try expectMatch(head, "",
         \\<head></head>
     );
-    try expectMatch([]const u8, head,
+    try expectMatch(head, "browse.vim",
         \\<head>browse.vim</head>
     );
 }
 
-test "header" {
-    try expectMatch([]const u8, header,
-        \\<header>browse.vim</header>
+test "h" {
+    try expectMatch(h, "browse.vim",
+        \\<h1>browse.vim</h1>
     );
 }
 
-test "h1" {
-    try expectMatch([]const u8, h1,
-        \\<h1>browse.vim</h1>
+test "header" {
+    try expectMatch(header, "browse.vim",
+        \\<header><h1>browse.vim</h1></header>
     );
 }
 
 //
 // Test helpers
 //
-fn expectMatch(comptime T: type, parser: m.Parser(T), s: []const u8) !void {
+fn expectMatch(
+    comptime parser: anytype,
+    comptime expected: m.ParserResult(@TypeOf(parser)),
+    comptime source: []const u8,
+) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
-    const res = try parser(arena.allocator(), s);
+    const res = try parser(arena.allocator(), source);
     try testing.expectEqualStrings("", res.rest);
+
+    switch (@TypeOf(expected)) {
+        []const u8 => try testing.expectEqualStrings(expected, res.value),
+        else => try testing.expectEqual(expected, res.value),
+    }
+}
+
+fn expectError(
+    comptime parser: anytype,
+    comptime expected: m.Error,
+    comptime source: []const u8,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectError(expected, parser(arena.allocator(), source));
 }
