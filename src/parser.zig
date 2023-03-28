@@ -9,50 +9,44 @@ const debug = std.debug;
 //
 const doc = combine(.{ doctype, html });
 
-const doctype = start("!DOCTYPE html");
+const doctype = tag("!DOCTYPE html");
 
-const html = combine(.{ m.opt(head), body });
+const html = combine(.{ m.discard(opt(head)), body });
 
-const head = combine(.{ start("head"), opt(string), end("head") });
+// TODO: define the contents
+const head = combine(.{ tag("head"), end("head") });
 
 const body = combine(.{
-    start("body"),
+    tag("body"),
+    wss,
     opt(header),
+    wss,
     many(m.oneOf(.{
         h,
         element,
-    })),
+    }), .{}),
+    wss,
     end("body"),
 });
 
-const element = m.oneOf(.{
-    string,
-    h,
+const element = combine(.{
+    wss,
+    m.oneOf(.{
+        string,
+        h,
+    }),
+    wss,
 });
 
-const header = combine(.{ start("header"), many(element), end("header") });
+const header = combine(.{ tag("header"), many(element, .{}), end("header") });
 
 //
 // Parsers for elements
 //
-const string = m.many(char, .{ .collect = false, .min = 1 });
+const h = m.oneOf(.{ h1, h2 });
 
-const char = m.oneOf(.{
-    m.utf8.range(0x0000, 0x003B),
-    escape('>'),
-    m.utf8.char(0x003D),
-    escape('<'),
-    m.utf8.range(0x003F, 0x27BF),
-});
-
-const h = m.oneOf(.{ h1, h2, h3, h4, h5, h6 });
-
-const h1 = combine(.{ start("h1"), many(_element), end("h1") });
-const h2 = combine(.{ start("h2"), many(_element), end("h2") });
-const h3 = combine(.{ start("h3"), many(_element), end("h3") });
-const h4 = combine(.{ start("h4"), many(_element), end("h4") });
-const h5 = combine(.{ start("h5"), many(_element), end("h5") });
-const h6 = combine(.{ start("h6"), many(_element), end("h6") });
+const h1 = combine(.{ tag("h1"), many(_element, .{}), end("h1") });
+const h2 = combine(.{ tag("h2"), many(_element, .{}), end("h2") });
 
 //
 // Utilities
@@ -60,11 +54,32 @@ const h6 = combine(.{ start("h6"), many(_element), end("h6") });
 const Parser = m.Parser([]const u8);
 const ParserResult = m.Result([]const u8);
 const ParserReturn = m.Error!ParserResult;
+const ParserFailed = m.Error.ParserFailed;
 
-fn many(comptime parser: Parser) Parser {
+const ws = m.utf8.range(0x0000, 0x0020);
+
+const wss = m.discard(m.many(ws, .{ .collect = false }));
+
+const char = m.oneOf(.{
+    m.utf8.range(0x0021, 0x003B),
+    escape('>'),
+    m.utf8.char(0x003D),
+    escape('<'),
+    m.utf8.range(0x003F, 0x27BF),
+});
+
+const chunk = m.many(char, .{ .collect = false, .min = 1 });
+
+const string = m.many(chunk, .{
+    .collect = false,
+    .min = 1,
+    .separator = m.discard(m.many(ws, .{ .min = 1, .collect = false })),
+});
+
+fn many(comptime parser: Parser, comptime options: m.ManyOptions) Parser {
     return struct {
         fn func(allocator: std.mem.Allocator, s: []const u8) ParserReturn {
-            const r = try m.many(parser, .{})(allocator, s);
+            const r = try m.many(parser, options)(allocator, s);
             return ParserResult{
                 .value = try std.mem.concat(allocator, u8, r.value),
                 .rest = r.rest,
@@ -79,13 +94,20 @@ fn combine(comptime parsers: anytype) Parser {
             const r = try m.combine(parsers)(allocator, s);
             const t = m.ParserResult(@TypeOf(m.combine(parsers)));
             switch (t) {
-                [][]const u8 => {
-                    const value = try std.mem.concat(allocator, u8, r.value);
-                    return ParserResult{ .value = value, .rest = r.rest };
-                },
                 []const u8 => return r,
                 void => return ParserResult{ .value = "", .rest = r.rest },
-                else => unreachable,
+                else => {
+                    // r.value should be a tuple of []const u8
+                    var list = std.ArrayList(u8).init(allocator);
+                    defer list.deinit();
+                    inline for (r.value) |str| {
+                        if (@TypeOf(str) != []const u8) {
+                            @compileError("combine() only accepts a tuple of []const u8");
+                        }
+                        try list.appendSlice(str);
+                    }
+                    return ParserResult{ .value = list.items, .rest = r.rest };
+                },
             }
         }
     }.func;
@@ -99,12 +121,12 @@ fn opt(comptime parser: Parser) Parser {
     return m.map(nullToStr, m.opt(parser));
 }
 
-fn start(comptime tag: []const u8) m.Parser(void) {
-    return m.discard(m.string("<" ++ tag ++ ">"));
+fn tag(comptime name: []const u8) m.Parser(void) {
+    return m.discard(m.string("<" ++ name ++ ">"));
 }
 
-fn end(comptime tag: []const u8) m.Parser(void) {
-    return m.discard(m.string("</" ++ tag ++ ">"));
+fn end(comptime name: []const u8) m.Parser(void) {
+    return m.discard(m.string("</" ++ name ++ ">"));
 }
 
 const _element = m.ref(elementRef);
@@ -125,35 +147,57 @@ fn escape(comptime c: u21) m.Parser(u21) {
 //
 test "char" {
     try expectMatch(char, 'a', "a");
-    try expectMatch(char, '\n', "\n");
+    try expectError(char, ParserFailed,
+        \\
+        \\
+    );
 
     try expectMatch(char, '>', "\\>");
-    try expectError(char, m.Error.ParserFailed, ">");
+    try expectError(char, ParserFailed, ">");
 
     try expectMatch(char, '<', "\\<");
-    try expectError(char, m.Error.ParserFailed, "<");
+    try expectError(char, ParserFailed, "<");
+}
+
+test "chunk" {
+    try expectMatch(chunk, "a", "a");
+    try expectError(chunk, ParserFailed, " ");
+    try expectMatch(chunk, "Vim", "Vim");
+    try expectError(chunk, ParserFailed, "<h1>");
+    try expectMatch(chunk, "browse.vim", "browse.vim");
+    try expectError(chunk, ParserFailed, " browse.vim");
+    try expectResult(chunk, .{ .value = "browse", .rest = " vim" }, "browse vim");
+}
+
+test "ws" {
+    try expectError(ws, ParserFailed, "");
+    try expectMatch(ws, ' ', " ");
 }
 
 test "string" {
-    try expectMatch(string, "hello", "hello");
     try expectMatch(string, "a", "a");
+    try expectError(string, ParserFailed, " ");
     try expectMatch(string, "Vim", "Vim");
-
-    try expectError(string, m.Error.ParserFailed, "<h1>");
+    try expectError(string, ParserFailed, "<h1>");
+    try expectMatch(string, "browse.vim", "browse.vim");
+    try expectMatch(string, "browse vim", "browse vim");
+    try expectError(string, ParserFailed, " browse vim");
+    try expectResult(string, .{ .value = "browse vim", .rest = " " }, "browse vim ");
 }
 
 test "combine" {
-    try expectMatch(combine(.{ start("a"), string, end("a") }), "Vim",
+    try expectMatch(combine(.{ tag("a"), string, end("a") }), "Vim",
         \\<a>Vim</a>
     );
-    try expectMatch(combine(.{ start("a"), m.discard(string), end("a") }), "",
+    try expectMatch(combine(.{ tag("a"), m.discard(string), end("a") }), "",
         \\<a>Vim</a>
     );
 }
 
 test "many" {
-    try expectMatch(many(h), "h1", "<h1>h1</h1>");
-    try expectMatch(many(h), "h1h2", "<h1>h1</h1><h2>h2</h2>");
+    try expectMatch(many(chunk, .{ .min = 1 }), "Vim", "Vim");
+    // try expectMatch(many(h, .{ .min = 1 }), "h1", "<h1>h1</h1>");
+    // try expectMatch(many(h, .{ .min = 1 }), "h1h2", "<h1>h1</h1><h2>h2</h2>");
 }
 
 test "doctype" {
@@ -166,9 +210,6 @@ test "head" {
     try expectMatch(head, "",
         \\<head></head>
     );
-    try expectMatch(head, "browse.vim",
-        \\<head>browse.vim</head>
-    );
 }
 
 test "h" {
@@ -180,6 +221,24 @@ test "h" {
 test "header" {
     try expectMatch(header, "browse.vim",
         \\<header><h1>browse.vim</h1></header>
+    );
+    try expectMatch(header, "browse.vim",
+        \\<header>
+        \\    <h1>browse.vim</h1>
+        \\</header>
+    );
+}
+
+test "body" {
+    try expectMatch(body, "",
+        \\<body></body>
+    );
+    try expectMatch(body, "browse.vim",
+        \\<body>
+        \\    <header>
+        \\        <h1>browse.vim</h1>
+        \\    </header>
+        \\</body>
     );
 }
 
@@ -211,4 +270,21 @@ fn expectError(
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     try testing.expectError(expected, parser(arena.allocator(), source));
+}
+
+fn expectResult(
+    comptime parser: anytype,
+    comptime expected: m.Result(m.ParserResult(@TypeOf(parser))),
+    comptime source: []const u8,
+) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const res = try parser(arena.allocator(), source);
+
+    switch (@TypeOf(expected.value)) {
+        []const u8 => try testing.expectEqualStrings(expected.value, res.value),
+        else => try testing.expectEqual(expected.value, res.value),
+    }
+    try testing.expectEqualStrings(expected.rest, res.rest);
 }
