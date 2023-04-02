@@ -1,0 +1,4 @@
+[submodule "src/mecha"]
+	path = src/mecha
+	url = https://github.com/hasundue/mecha.git
+	branch = bracket

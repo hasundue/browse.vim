@@ -4,16 +4,17 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mecha = b.dependency("mecha", .{});
-    const mecha_module = mecha.module("mecha");
+    const mecha = b.addModule("mecha", .{
+        .source_file = .{ .path = "src/mecha/mecha.zig" },
+    });
 
     const exe = b.addExecutable(.{
-        .name = "browse",
+        .name = "browse-vim",
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
         .optimize = optimize,
     });
-    exe.addModule("mecha", mecha_module);
+    exe.addModule("mecha", mecha);
 
     exe.install();
     const run_cmd = exe.run();
@@ -31,7 +32,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe_tests.addModule("mecha", mecha_module);
+    exe_tests.addModule("mecha", mecha);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&exe_tests.run().step);
