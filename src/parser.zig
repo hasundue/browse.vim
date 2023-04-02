@@ -76,11 +76,11 @@ test "text" {
 // TODO: add restriction that the text must not start with the string ">",
 // nor start with the string "->", nor contain the strings "<!--", "-->",
 // or "--!>", nor end with the string "<!-".
-const comment = m.discard(m.bracket(
+const comment = m.discard(m.combine(.{
     m.string("<!--"),
-    text,
+    m.many(m.utf8.not(m.string("-->")), .{ .collect = false }),
     m.string("-->"),
-));
+}));
 
 test "comment" {
     try testing.expect(@TypeOf(comment) == m.Parser(void));
